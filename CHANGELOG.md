@@ -7,6 +7,10 @@
 
 ## Unreleased: mitmproxy next
 
+- Add optional Akamai-style HTTP/2 client fingerprinting behind the `h2_fingerprint` option. The fingerprint is
+  computed once per client connection from the first SETTINGS frame, initial connection-level WINDOW_UPDATE and the
+  first request's pseudo-header order, exposed as `flow.metadata["h2_fingerprint"]`, and the new `h2_fingerprint_tags`
+  option can tag flows based on fingerprint prefixes.
 - mitmweb: Add a quiet zone around the WireGuard QR code so that it can be scanned in dark mode.
   ([#8585](https://github.com/mitmproxy/mitmproxy/pull/8585), @yldrmzffr)
 - Expand `~` in the `hardump` option, like other file path options. Previously, the HAR file

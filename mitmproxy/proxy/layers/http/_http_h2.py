@@ -1,4 +1,5 @@
 import collections
+import collections.abc
 import logging
 from collections.abc import Buffer
 from typing import NamedTuple
@@ -57,6 +58,12 @@ class BufferedH2Connection(h2.connection.H2Connection):
         self.local_settings.acknowledge()
         self.stream_buffers = collections.defaultdict(collections.deque)
         self.stream_trailers = {}
+        # Optional callback invoked with every parsed h2 event *before* the
+        # buffering layer filters events out (notably WindowUpdated). Used by
+        # the HTTP/2 fingerprint collector, which needs the raw wire events.
+        self.event_observer: (
+            collections.abc.Callable[[h2.events.Event], None] | None
+        ) = None
 
     def initiate_connection(self):
         super().initiate_connection()
@@ -124,6 +131,8 @@ class BufferedH2Connection(h2.connection.H2Connection):
         events = super().receive_data(data)
         ret = []
         for event in events:
+            if self.event_observer is not None:
+                self.event_observer(event)
             if isinstance(event, h2.events.WindowUpdated):
                 if event.stream_id == 0:
                     self.connection_window_updated()

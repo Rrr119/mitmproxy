@@ -44,6 +44,7 @@ from ._http2 import Http2Server
 from ._http3 import Http3Client
 from ._http3 import Http3Server
 from mitmproxy import flow
+from mitmproxy import h2fingerprint
 from mitmproxy import http
 from mitmproxy.connection import Connection
 from mitmproxy.connection import Server
@@ -214,6 +215,14 @@ class HttpStream(layer.Layer):
             self.flow = event.replay_flow
         self.flow.request = event.request
         self.flow.live = True
+        h2_fingerprint = self.context.client.h2_fingerprint
+        if h2_fingerprint is not None:
+            # HTTP/2 is multiplexed: the fingerprint describes the whole
+            # connection, we only copy the reference value onto each flow
+            # so that addons and filters can access it per request.
+            self.flow.metadata[h2fingerprint.H2_FINGERPRINT_METADATA_KEY] = (
+                h2_fingerprint
+            )
 
         if (yield from self.check_invalid(True)):
             return

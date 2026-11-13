@@ -33,6 +33,23 @@ server does not speak HTTP/2, mitmproxy seamlessly translates messages to HTTP/1
 - *Push Promises*: mitmproxy currently does not advertise support for HTTP/2 Push Promises.
 - *Cleartext HTTP/2*: mitmproxy currently does not support unencrypted HTTP/2 (h2c).
 
+##### HTTP/2 Fingerprinting
+
+Enable the `h2_fingerprint` option to compute an [Akamai-style HTTP/2 fingerprint](https://www.blackhat.com/docs/eu-17/materials/eu-17-Shuster-Passive-Fingerprinting-Of-HTTP2-Clients.pdf)
+for every client connection. The fingerprint combines the client's first SETTINGS frame (parameters, values and
+transmission order), the initial connection-level WINDOW_UPDATE and the first request's pseudo-header order into a
+four-component string such as `1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p`.
+
+Because HTTP/2 multiplexes many requests over one connection, the fingerprint is a property of the connection, not of
+an individual request. It is stored once on the client connection and copied to `flow.metadata["h2_fingerprint"]` of
+every flow that reuses that connection; a connection log entry is emitted when it is computed. Frames sent by
+mitmproxy itself are excluded.
+
+Use the `h2_fingerprint_tags` option to assign tags based on fingerprint prefixes, using a
+`/fingerprint-prefix/tag` syntax (any leading character may serve as the separator). Matching tags are written to
+`flow.metadata["h2_fingerprint_tags"]` and can be queried with a [filter expression]({{< relref "/concepts/filters" >}})
+such as `~m h2_fingerprint_tags`.
+
 ## HTTP/3
 
 HTTP/3 support in mitmproxy is based on [aioquic](https://github.com/aiortc/aioquic). Mitmproxy's HTTP/3 functionality

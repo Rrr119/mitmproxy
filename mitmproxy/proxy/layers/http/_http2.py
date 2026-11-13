@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from enum import Enum
 from logging import DEBUG
 from logging import ERROR
+from logging import INFO
 from typing import Any
 from typing import assert_never
 from typing import ClassVar
@@ -46,6 +47,7 @@ from ._base import HttpEvent
 from ._base import ReceiveHttp
 from ._http_h2 import BufferedH2Connection
 from ._http_h2 import H2ConnectionLogger
+from mitmproxy import h2fingerprint
 from mitmproxy import http
 from mitmproxy import version
 from mitmproxy.connection import Connection
@@ -91,6 +93,34 @@ class Http2Connection(HttpConnection):
         )
         self.h2_conn = BufferedH2Connection(self.h2_conf)
         self.streams = {}
+        # The HTTP/2 fingerprint is a property of the client connection.
+        # Only the client-facing Http2Server populates it, and only when the
+        # feature is enabled so that disabled connections pay no cost.
+        self.h2_fingerprint_collector: h2fingerprint.H2FingerprintCollector | None = (
+            h2fingerprint.H2FingerprintCollector()
+            if self._fingerprinting_enabled()
+            else None
+        )
+        if self.h2_fingerprint_collector is not None:
+            self.h2_conn.event_observer = self._observe_h2_event
+
+    def _observe_h2_event(self, event: h2.events.Event) -> None:
+        collector = self.h2_fingerprint_collector
+        if collector is None or collector.complete:
+            return
+        if isinstance(event, h2.events.WindowUpdated):
+            collector.record_window_update(event.stream_id, event.delta)
+
+    def _fingerprinting_enabled(self) -> bool:
+        """Whether frames parsed by this connection should be fingerprinted.
+
+        Only the client-facing server connection fingerprints, because the
+        fingerprint describes the client. The option may be absent in unit
+        tests with a bare Options object; treat that as disabled.
+        """
+        return isinstance(self, Http2Server) and bool(
+            getattr(self.context.options, "h2_fingerprint", False)
+        )
 
     def is_closed(self, stream_id: int) -> bool:
         """Check if a non-idle stream is closed"""
@@ -285,11 +315,32 @@ class Http2Connection(HttpConnection):
             #        yield ReceiveHttp(self.ReceiveProtocolError(stream_id, f"HTTP/2 connection closed: {event!r}"))
             #        self.streams.pop(stream_id)
         elif isinstance(event, h2.events.RemoteSettingsChanged):
-            pass
+            # This is the remote peer's SETTINGS frame. On the client-facing
+            # server connection the remote peer is the actual client, which is
+            # exactly what we want to fingerprint. Our own SETTINGS frame goes
+            # into the other direction and never produces this event here.
+            if self.h2_fingerprint_collector is not None:
+                self.h2_fingerprint_collector.record_settings(event.changed_settings)
         elif isinstance(event, h2.events.SettingsAcknowledged):
             pass
         elif isinstance(event, h2.events.PriorityUpdated):
-            pass
+            if self.h2_fingerprint_collector is not None:
+                # h2 types these fields as optional, but a parsed
+                # PriorityUpdated event always populates all of them.
+                assert (
+                    event.stream_id is not None
+                    and event.exclusive is not None
+                    and event.depends_on is not None
+                    and event.weight is not None
+                )
+                self.h2_fingerprint_collector.record_priority(
+                    event.stream_id,
+                    event.exclusive,
+                    event.depends_on,
+                    # h2 reports the HTTP/2 weight (1-256), the fingerprint
+                    # uses the wire representation, which is weight - 1.
+                    event.weight - 1,
+                )
         elif isinstance(event, h2.events.PingReceived):
             pass
         elif isinstance(event, h2.events.PingAckReceived):
@@ -461,6 +512,19 @@ class Http2Server(Http2Connection):
                 timestamp_end=None,
             )
             self.streams[event.stream_id] = StreamState.HEADERS_RECEIVED
+            collector = self.h2_fingerprint_collector
+            if collector is not None and not collector.complete:
+                fingerprint = collector.record_request_headers(event.headers)
+                fingerprint_str = str(fingerprint)
+                # Keep the fingerprint on the connection object: HTTP/2 is
+                # multiplexed, so every flow reused on this connection shares
+                # the same connection-level fingerprint.
+                self.context.client.h2_fingerprint = fingerprint_str
+                yield Log(
+                    f"{human.format_address(self.conn.peername)}: "
+                    f"client HTTP/2 fingerprint {fingerprint_str}",
+                    INFO,
+                )
             yield ReceiveHttp(
                 RequestHeaders(
                     event.stream_id, request, end_stream=bool(event.stream_ended)

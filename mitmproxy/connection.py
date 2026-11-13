@@ -190,6 +190,15 @@ class Client(Connection):  # type: ignore[override]
     )
     """The proxy server type this client has been connecting to."""
 
+    h2_fingerprint: str | None = field(default=None, metadata={"serialize": False})
+    """
+    The client's connection-level HTTP/2 fingerprint (Akamai four-component
+    format), computed once from the client's first SETTINGS frame, initial
+    connection-level WINDOW_UPDATE and the first request's pseudo-header
+    order. ``None`` if HTTP/2 fingerprinting is disabled or the client did
+    not use HTTP/2. Not persisted because it is derived at runtime.
+    """
+
     timestamp_start: float = field(default_factory=time.time)
     """*Timestamp:* TCP SYN received"""
 

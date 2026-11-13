@@ -1,5 +1,6 @@
 import time
 from logging import DEBUG
+from logging import INFO
 
 import h2.settings
 import hpack
@@ -10,6 +11,7 @@ from h2.errors import ErrorCodes
 from mitmproxy.connection import ConnectionState
 from mitmproxy.connection import Server
 from mitmproxy.flow import Error
+from mitmproxy.h2fingerprint import H2_FINGERPRINT_METADATA_KEY
 from mitmproxy.http import Headers
 from mitmproxy.http import HTTPFlow
 from mitmproxy.http import Request
@@ -66,6 +68,11 @@ def decode_frames(data: bytes) -> list[hyperframe.frame.Frame]:
         frames.append(f)
         data = data[9 + length :]
     return frames
+
+
+def enable_h2_fingerprinting(tctx: Context) -> None:
+    tctx.options.add_option("h2_fingerprint", bool, False, "")
+    tctx.options.h2_fingerprint = True
 
 
 def start_h2_client(tctx: Context, keepalive: int = 0) -> tuple[Playbook, FrameFactory]:
@@ -1423,3 +1430,195 @@ def test_forward_empty_data_frame(tctx):
         >> DataReceived(server, cff.build_data_frame(b"").serialize())
         << SendData(tctx.client, cff.build_data_frame(b"").serialize())
     )
+
+
+def test_h2_fingerprint_collected_on_client_connection(tctx):
+    enable_h2_fingerprinting(tctx)
+    playbook, cff = start_h2_client(tctx)
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    initial = Placeholder(bytes)
+    custom_settings = {
+        hyperframe.frame.SettingsFrame.HEADER_TABLE_SIZE: 65536,
+        hyperframe.frame.SettingsFrame.ENABLE_PUSH: 0,
+        hyperframe.frame.SettingsFrame.INITIAL_WINDOW_SIZE: 6291456,
+        hyperframe.frame.SettingsFrame.MAX_HEADER_LIST_SIZE: 262144,
+    }
+
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client, cff.build_settings_frame(custom_settings).serialize()
+        )
+        << SendData(tctx.client, Placeholder(bytes))  # h2's SETTINGS ACK
+        >> DataReceived(
+            tctx.client, cff.build_window_update_frame(0, 15663105).serialize()
+        )
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                example_request_headers, flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << SendData(server, initial)
+    )
+
+    expected = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,s,p,a"
+    assert tctx.client.h2_fingerprint == expected
+    assert flow().metadata[H2_FINGERPRINT_METADATA_KEY] == expected
+
+    log_commands = [
+        cmd for cmd in playbook.actual if isinstance(cmd, Log) and cmd.level == INFO
+    ]
+    assert len(log_commands) == 1
+    assert log_commands[0].level == INFO
+    assert (
+        log_commands[0].message == "client:1234: client HTTP/2 fingerprint " + expected
+    )
+
+
+def test_h2_fingerprint_computed_once_for_reused_connection(tctx):
+    enable_h2_fingerprinting(tctx)
+    playbook, cff = start_h2_client(tctx)
+    playbook.hooks = False
+    server = Placeholder(Server)
+
+    custom_settings = {
+        hyperframe.frame.SettingsFrame.HEADER_TABLE_SIZE: 4096,
+        hyperframe.frame.SettingsFrame.ENABLE_PUSH: 1,
+    }
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client, cff.build_settings_frame(custom_settings).serialize()
+        )
+        << SendData(tctx.client, Placeholder(bytes))  # h2's SETTINGS ACK
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                example_request_headers, flags=["END_STREAM"], stream_id=1
+            ).serialize(),
+        )
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << SendData(server, Placeholder(bytes))
+        >> DataReceived(
+            tctx.client,
+            # A second request reusing the same connection with a different
+            # pseudo-header order must not alter the fingerprint.
+            cff.build_headers_frame(
+                (
+                    (b":method", b"GET"),
+                    (b":path", b"/second"),
+                    (b":scheme", b"http"),
+                    (b":authority", b"example.com"),
+                ),
+                flags=["END_STREAM"],
+                stream_id=3,
+            ).serialize(),
+        )
+        << SendData(server, Placeholder(bytes))
+    )
+
+    expected = "1:4096;2:1|0|0|m,s,p,a"
+    assert tctx.client.h2_fingerprint == expected
+    http_flows = [
+        cmd.flow for cmd in playbook.actual if isinstance(cmd, http.HttpRequestHook)
+    ]
+    assert len(http_flows) == 2
+    for http_flow in http_flows:
+        assert http_flow.metadata[H2_FINGERPRINT_METADATA_KEY] == expected
+    # Both flows share the same underlying client connection object.
+    assert http_flows[0].client_conn is http_flows[1].client_conn is tctx.client
+
+
+def test_h2_fingerprint_disabled_has_no_collector_and_no_metadata(tctx):
+    # The option is not even registered, simulating the default disabled state.
+    playbook, cff = start_h2_client(tctx)
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    initial = Placeholder(bytes)
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                example_request_headers, flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << SendData(server, initial)
+    )
+    assert tctx.client.h2_fingerprint is None
+    assert H2_FINGERPRINT_METADATA_KEY not in flow().metadata
+
+
+def test_h2_fingerprint_without_window_update(tctx):
+    enable_h2_fingerprinting(tctx)
+    playbook, cff = start_h2_client(tctx)
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    initial = Placeholder(bytes)
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                example_request_headers, flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << SendData(server, initial)
+    )
+    # The start_h2_client helper sends no client SETTINGS/WINDOW_UPDATE frames,
+    # so those fingerprint components must fall back to their empty defaults.
+    assert tctx.client.h2_fingerprint == "|0|0|m,s,p,a"
+
+
+def test_h2_fingerprint_includes_priority_frames(tctx):
+    enable_h2_fingerprinting(tctx)
+    playbook, cff = start_h2_client(tctx)
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    initial = Placeholder(bytes)
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client,
+            # Wire weight 200 is exposed as 201 by h2 and must be converted
+            # back to the wire representation in the fingerprint.
+            cff.build_priority_frame(
+                3, weight=200, depends_on=0, exclusive=False
+            ).serialize(),
+        )
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                example_request_headers, flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << SendData(server, initial)
+    )
+    assert tctx.client.h2_fingerprint == "|0|3:0:0:200|m,s,p,a"

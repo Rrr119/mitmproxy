@@ -26,6 +26,8 @@ export interface OptionsState {
     emudhra: boolean;
     emudhra_old: boolean;
     export_preserve_original_ip: boolean;
+    h2_fingerprint: boolean;
+    h2_fingerprint_tags: string[];
     hardump: string;
     http2: boolean;
     http2_ping_keepalive: number;
@@ -136,6 +138,8 @@ export const defaultState: OptionsState = {
     emudhra: false,
     emudhra_old: false,
     export_preserve_original_ip: false,
+    h2_fingerprint: false,
+    h2_fingerprint_tags: [],
     hardump: "",
     http2: true,
     http2_ping_keepalive: 58,
