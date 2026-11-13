@@ -1,3 +1,4 @@
+import hashlib
 import io
 from dataclasses import dataclass
 
@@ -9,6 +10,108 @@ from mitmproxy.contrib.kaitaistruct import dtls_client_hello
 from mitmproxy.contrib.kaitaistruct import tls_client_hello
 from mitmproxy.net import check
 from mitmproxy.proxy import context
+
+# GREASE values (RFC 8701) are deliberately ignored by TLS fingerprinting.
+GREASE_VALUES = frozenset(
+    {
+        0x0A0A,
+        0x1A1A,
+        0x2A2A,
+        0x3A3A,
+        0x4A4A,
+        0x5A5A,
+        0x6A6A,
+        0x7A7A,
+        0x8A8A,
+        0x9A9A,
+        0xAAAA,
+        0xBABA,
+        0xCACA,
+        0xDADA,
+        0xEAEA,
+        0xFAFA,
+    }
+)
+
+_JA4_TLS_VERSIONS = {
+    0x0002: "s2",
+    0x0300: "s3",
+    0x0301: "10",
+    0x0302: "11",
+    0x0303: "12",
+    0x0304: "13",
+    0xFEFF: "d1",
+    0xFEFC: "d3",
+    0xFEFD: "d2",
+}
+
+
+def _is_grease(value: int) -> bool:
+    return value in GREASE_VALUES
+
+
+def _extension_body(client_hello: "ClientHello", extension_type: int) -> bytes | None:
+    for current_type, body in client_hello.extensions:
+        if current_type == extension_type:
+            return body
+    return None
+
+
+def _parse_u16_list(body: bytes | None, length_bytes: int) -> list[int]:
+    if not body or len(body) < length_bytes:
+        return []
+    declared_length = int.from_bytes(body[:length_bytes], "big")
+    data = body[length_bytes : length_bytes + declared_length]
+    if len(data) % 2:
+        data = data[:-1]
+    return [
+        int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data), 2)
+    ]
+
+
+def _parse_u8_list(body: bytes | None) -> list[int]:
+    if not body:
+        return []
+    declared_length = body[0]
+    return list(body[1 : 1 + declared_length])
+
+
+def _parse_signature_algorithms(body: bytes | None) -> list[int]:
+    if not body or len(body) < 2:
+        return []
+    declared_length = int.from_bytes(body[:2], "big")
+    data = body[2 : 2 + declared_length]
+    if len(data) % 2:
+        data = data[:-1]
+    return [
+        int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data), 2)
+    ]
+
+
+def _ja4_alpn_code(alpn: bytes | None) -> str:
+    if not alpn:
+        return "00"
+    if (
+        0x30 <= alpn[0] <= 0x39
+        or 0x41 <= alpn[0] <= 0x5A
+        or 0x61 <= alpn[0] <= 0x7A
+    ) and (
+        0x30 <= alpn[-1] <= 0x39
+        or 0x41 <= alpn[-1] <= 0x5A
+        or 0x61 <= alpn[-1] <= 0x7A
+    ):
+        return chr(alpn[0]) + chr(alpn[-1])
+    encoded = alpn.hex()
+    return encoded[0] + encoded[-1]
+
+
+def _ja4_version(client_hello: "ClientHello") -> str:
+    supported_versions = _parse_u16_list(
+        _extension_body(client_hello, 0x002B), length_bytes=1
+    )
+    versions = [version for version in supported_versions if not _is_grease(version)]
+    version = max(versions) if versions else client_hello.tls_version
+    return _JA4_TLS_VERSIONS.get(version, "00")
 
 
 class ClientHello:
@@ -105,6 +208,118 @@ class ClientHello:
                 body = getattr(extension, "_raw_body", extension.body)
                 ret.append((extension.type, body))
         return ret
+
+    @property
+    def tls_version(self) -> int:
+        """The legacy TLS version from the ClientHello, encoded as an integer."""
+        version = self._client_hello.version
+        return (int(version.major) << 8) | int(version.minor)
+
+    @property
+    def is_dtls(self) -> bool:
+        """Whether this ClientHello was sent over DTLS."""
+        return isinstance(self._client_hello, dtls_client_hello.DtlsClientHello)
+
+    @property
+    def ja3_raw(self) -> str:
+        """
+        The raw JA3 string before hashing.
+
+        GREASE values are excluded from all lists.
+        """
+        ciphers = [
+            str(cipher)
+            for cipher in self.cipher_suites
+            if not _is_grease(cipher)
+        ]
+        extensions = [
+            str(extension_type)
+            for extension_type, _ in self.extensions
+            if not _is_grease(extension_type)
+        ]
+        groups = [
+            str(group)
+            for group in _parse_u16_list(
+                _extension_body(self, 0x000A), length_bytes=2
+            )
+            if not _is_grease(group)
+        ]
+        point_formats = [
+            str(point_format)
+            for point_format in _parse_u8_list(_extension_body(self, 0x000B))
+            if not _is_grease(point_format)
+        ]
+        return (
+            f"{self.tls_version},"
+            f"{'-'.join(ciphers)},"
+            f"{'-'.join(extensions)},"
+            f"{'-'.join(groups)},"
+            f"{'-'.join(point_formats)}"
+        )
+
+    @property
+    def ja3(self) -> str:
+        """The JA3 fingerprint (MD5 of `ja3_raw`)."""
+        return hashlib.md5(self.ja3_raw.encode("ascii")).hexdigest()
+
+    @property
+    def ja4_raw(self) -> str:
+        """The raw (unhashed) JA4 fingerprint, including sorted cipher/extension lists."""
+        ciphers = [
+            f"{cipher:04x}"
+            for cipher in self.cipher_suites
+            if not _is_grease(cipher)
+        ]
+        extensions = [
+            f"{extension_type:04x}"
+            for extension_type, _ in self.extensions
+            if not _is_grease(extension_type)
+        ]
+        signature_algorithms = [
+            f"{signature_algorithm:04x}"
+            for signature_algorithm in _parse_signature_algorithms(
+                _extension_body(self, 0x000D)
+            )
+            if not _is_grease(signature_algorithm)
+        ]
+
+        cipher_count = min(len(ciphers), 99)
+        extension_count = min(len(extensions), 99)
+        alpn = self.alpn_protocols[0] if self.alpn_protocols else None
+        sni = "d" if _extension_body(self, 0x0000) is not None else "i"
+        protocol = "d" if self.is_dtls else "t"
+        prefix = (
+            f"{protocol}{_ja4_version(self)}{sni}"
+            f"{cipher_count:02d}{extension_count:02d}{_ja4_alpn_code(alpn)}"
+        )
+
+        sorted_ciphers = sorted(ciphers)
+        sorted_extensions = sorted(
+            extension for extension in extensions if extension not in ("0000", "0010")
+        )
+        extension_hash_input = ",".join(sorted_extensions)
+        if signature_algorithms:
+            extension_hash_input += "_" + ",".join(signature_algorithms)
+
+        cipher_raw = ",".join(sorted_ciphers) if sorted_ciphers else ""
+        extension_raw = extension_hash_input
+        return f"{prefix}_{cipher_raw}_{extension_raw}"
+
+    @property
+    def ja4(self) -> str:
+        """The JA4 fingerprint."""
+        prefix, cipher_raw, extension_raw = self.ja4_raw.split("_", 2)
+        cipher_hash = (
+            hashlib.sha256(cipher_raw.encode("ascii")).hexdigest()[:12]
+            if cipher_raw
+            else "000000000000"
+        )
+        extension_hash = (
+            hashlib.sha256(extension_raw.encode("ascii")).hexdigest()[:12]
+            if extension_raw
+            else "000000000000"
+        )
+        return f"{prefix}_{cipher_hash}_{extension_hash}"
 
     def __repr__(self):
         return f"ClientHello(sni: {self.sni}, alpn_protocols: {self.alpn_protocols})"

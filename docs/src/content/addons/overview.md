@@ -20,6 +20,9 @@ mitmproxy's config file, changed interactively by users, or passed on the comman
 [commands]({{< relref "/addons/commands" >}}), which allows users to invoke their actions either directly or by binding
 them to keys in the interactive tools.
 
+For User-Agent based TLS fingerprint enforcement, see
+[TLS Fingerprinting]({{< relref "/addons/tls-fingerprinting" >}}).
+
 # Anatomy of an addon
 
 {{< example src="examples/addons/anatomy.py" lang="py" >}}
