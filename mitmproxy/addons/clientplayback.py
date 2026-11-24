@@ -91,6 +91,7 @@ class ReplayHandler(server.ConnectionHandler):
 
         context = Context(client, options)
         context.server = Server(address=(flow.request.host, flow.request.port))
+        context.server.transport_protocol = flow.server_conn.transport_protocol
         if flow.request.scheme == "https":
             context.server.tls = True
             context.server.sni = flow.request.pretty_host

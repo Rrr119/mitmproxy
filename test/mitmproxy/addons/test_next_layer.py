@@ -569,7 +569,15 @@ explicit_proxy_configs = [
             after=[modes.HttpUpstreamProxy, ClientQuicLayer, HttpLayer],
             transport_protocol="udp",
         ),
-        id=f"explicit proxy: experimental http3",
+        id=f"explicit upstream proxy: http3",
+    ),
+    pytest.param(
+        TConf(
+            before=[modes.HttpProxy],
+            after=[modes.HttpProxy, ClientQuicLayer, HttpLayer],
+            transport_protocol="udp",
+        ),
+        id=f"explicit proxy: http3",
     ),
     pytest.param(
         TConf(

@@ -1,0 +1,18 @@
+{
+  "uid": "36754",
+  "harness": "Codex CLI",
+  "snapshotUrl": "https://github.com/Rrr119/mitmproxy/commit/ac8ed528e068fa1d2b8ecd84bda168c2d91eab66",
+  "harnessVersion": "codex-cli 0.167.2",
+  "operatingSystem": "Ubuntu 26.04.1 LTS",
+  "operatingSystemCell": [
+    "MacOS/Linux"
+  ],
+  "outputDirectory": "/home/dev/feedback/uid36754",
+  "wslDistro": "Ubuntu-26.04",
+  "B": {
+    "success": false,
+    "canceled": true,
+    "error": "任务已取消",
+    "side": "B"
+  }
+}

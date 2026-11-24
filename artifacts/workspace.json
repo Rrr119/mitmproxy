@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid36754",
+  "B": "/home/dev/feedback/uid36754",
+  "sha": "ac8ed528e068fa1d2b8ecd84bda168c2d91eab66",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "mitmproxy",
+    "repo": "mitmproxy",
+    "sha": "ac8ed528e068fa1d2b8ecd84bda168c2d91eab66"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "mitmproxy",
+    "cloneUrl": "https://github.com/Rrr119/mitmproxy.git"
+  },
+  "at": "2026-11-24T03:32:42.277Z"
+}

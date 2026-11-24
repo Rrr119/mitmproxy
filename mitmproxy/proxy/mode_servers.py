@@ -541,6 +541,6 @@ class TunInstance(ServerInstance[mode_specs.TunMode]):
             self._server = None
 
 
-# class Http3Instance(AsyncioServerInstance[mode_specs.Http3Mode]):
-#     def make_top_layer(self, context: Context) -> Layer:
-#         return layers.modes.HttpProxy(context)
+class Http3Instance(AsyncioServerInstance[mode_specs.Http3Mode]):
+    def make_top_layer(self, context: Context) -> Layer:
+        return layers.modes.HttpProxy(context)

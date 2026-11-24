@@ -63,6 +63,13 @@ The square brackets signify the source and destination IP addresses.
 Your client explicitly connects to mitmproxy and mitmproxy explicitly
 connects to the target server.
 
+#### HTTP/3 Proxy
+
+Regular proxying over HTTP/3 uses QUIC between the client and mitmproxy. Start mitmproxy with
+`--mode http3` and configure your HTTP/3-capable client to use that endpoint as its proxy.
+Requests and responses are exposed through the same addon API as other HTTP versions, so existing
+`request`, `responseheaders`, and `response` hooks can inspect and modify individual streams.
+
 
 ## Local Capture
 

@@ -37,6 +37,14 @@ def test_parse_subclass():
         Socks5Mode.parse("regular")
 
 
+def test_http3_mode():
+    mode = ProxyMode.parse("http3@127.0.0.1:443")
+    assert mode.transport_protocol == "udp"
+    assert mode.description == "HTTP/3 proxy"
+    assert mode.listen_host() == "127.0.0.1"
+    assert mode.listen_port() == 443
+
+
 def test_listen_addr():
     assert ProxyMode.parse("regular").listen_port() == 8080
     assert ProxyMode.parse("regular@1234").listen_port() == 1234
@@ -60,7 +68,7 @@ def test_listen_addr():
 
 def test_parse_specific_modes():
     assert ProxyMode.parse("regular")
-    # assert ProxyMode.parse("http3")
+    assert ProxyMode.parse("http3")
     assert ProxyMode.parse("transparent")
     assert ProxyMode.parse("upstream:https://proxy")
     assert ProxyMode.parse("reverse:https://host@443")
@@ -83,8 +91,8 @@ def test_parse_specific_modes():
     with pytest.raises(ValueError, match="takes no arguments"):
         ProxyMode.parse("regular:configuration")
 
-    # with pytest.raises(ValueError, match="takes no arguments"):
-    #     ProxyMode.parse("http3:configuration")
+    with pytest.raises(ValueError, match="takes no arguments"):
+        ProxyMode.parse("http3:configuration")
 
     with pytest.raises(ValueError, match="invalid upstream proxy scheme"):
         ProxyMode.parse("upstream:dns://example.com")

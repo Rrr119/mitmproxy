@@ -36,14 +36,13 @@ server does not speak HTTP/2, mitmproxy seamlessly translates messages to HTTP/1
 ## HTTP/3
 
 HTTP/3 support in mitmproxy is based on [aioquic](https://github.com/aiortc/aioquic). Mitmproxy's HTTP/3 functionality
-is available in reverse proxy, local and WireGuard mode.
+is available in regular, reverse proxy, local and WireGuard mode.
 
 ##### Known Limitations
 
-- *Replay*: Client Replay is currently broken.
 - *Supported Versions*: mitmproxy currently only supports QUIC Version 1. Version 2 (RFC 9369) is not supported yet.
-- *Implementation Compatibility*: mitmproxy's HTTP/3 support has only been extensively tested with cURL.
-  Other implementations are likely to exhibit bugs.
+- *Implementation Compatibility*: mitmproxy's HTTP/3 support has been extensively tested with cURL.
+  Integration tests also cover aioquic and request patterns used by nghttp3.
 
 ## WebSocket
 

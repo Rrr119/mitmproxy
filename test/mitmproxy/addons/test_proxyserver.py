@@ -840,7 +840,6 @@ async def test_reverse_quic_datagram(caplog_async) -> None:
             await _wait_for_connection_closes(ps)
 
 
-@pytest.mark.skip("HTTP/3 for regular mode is not fully supported yet")
 async def test_regular_http3(caplog_async, monkeypatch) -> None:
     caplog_async.set_level("INFO")
     ps = Proxyserver()
@@ -857,7 +856,7 @@ async def test_regular_http3(caplog_async, monkeypatch) -> None:
                 if host == "example.mitmproxy.org" and port == 443:
                     host = server_addr[0]
                     port = server_addr[1]
-                return orig_open_connection(host, port, *args, **kwargs)
+                return await orig_open_connection(host, port, *args, **kwargs)
 
             monkeypatch.setattr(
                 mitmproxy_rs.udp, "open_udp_connection", open_connection_path
@@ -872,7 +871,7 @@ async def test_regular_http3(caplog_async, monkeypatch) -> None:
             tctx.configure(ps, mode=[mode])
             assert await ps.setup_servers()
             ps.running()
-            await caplog_async.await_log(f"HTTP3 proxy listening")
+            await caplog_async.await_log(f"HTTP/3 proxy listening")
             assert ps.servers
             addr = ps.servers[mode].listen_addrs[0]
             async with quic_connect(H3Client, alpn=["h3"], address=addr) as client:

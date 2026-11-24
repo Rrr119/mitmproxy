@@ -7,6 +7,9 @@
 
 ## Unreleased: mitmproxy next
 
+- Restore the regular HTTP/3 proxy mode (`--mode http3`). HTTP/3 requests use QUIC for upstream
+  connections, can be modified through the existing HTTP addon API on a per-stream basis, and
+  support client replay.
 - Update aioquic to 1.9.0, which adds post-quantum key exchange and HelloRetryRequest support to
   QUIC. Cancelling an HTTP/3 request no longer cuts off a complete response the client has not
   acknowledged yet, and requests to an HTTP/3 server which sent GOAWAY fail straight away.

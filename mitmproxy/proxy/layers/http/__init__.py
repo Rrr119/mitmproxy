@@ -952,6 +952,7 @@ class HttpLayer(layer.Layer):
         if isinstance(event, events.Start):
             http_conn: HttpConnection
             if is_h3_alpn(self.context.client.alpn):
+                self.context.server.transport_protocol = "udp"
                 http_conn = Http3Server(self.context.fork())
             elif self.context.client.alpn == b"h2":
                 http_conn = Http2Server(self.context.fork())

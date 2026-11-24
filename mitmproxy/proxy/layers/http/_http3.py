@@ -301,6 +301,7 @@ class Http3Server(Http3Connection):
 
     def __init__(self, context: context.Context):
         super().__init__(context, context.client)
+        self.context.server.transport_protocol = "udp"
 
     def parse_headers(self, event: HeadersReceived) -> RequestHeaders | ResponseHeaders:
         # same as HTTP/2
